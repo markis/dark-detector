@@ -1,0 +1,7 @@
+services:
+  dark-detector:
+    build:
+      context: .
+      dockerfile: Containerfile
+    env_file:
+      - .env
