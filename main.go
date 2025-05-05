@@ -70,9 +70,6 @@ func runProcessingLoop(
 				errChan <- err
 				return
 			}
-
-			log.Printf("Estimated Lux: %d", lux)
-
 			if err := publisher.PublishLux(ctx, lux); err != nil {
 				errChan <- err
 				return

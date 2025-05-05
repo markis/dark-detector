@@ -9,26 +9,30 @@ import (
 
 // Config holds the configuration for the application.
 type Config struct {
-	Interval     int
-	ImageURL     string
-	ImageCrop    *[]int
-	MQTTHost     string
-	MQTTTopic    string
-	MQTTClientID string
-	MQTTUsername string
-	MQTTPassword string
-	HAName       string
+	Interval                 int
+	ImageURL                 string
+	ImageCrop                *[]int
+	MQTTHost                 string
+	MQTTTopic                string
+	MQTTClientID             string
+	MQTTUsername             string
+	MQTTPassword             string
+	HASSAutoDiscoveryEnabled bool
+	HASSAutoDiscoveryTopic   string
+	HASSName                 string
 }
 
 // Load initializes the configuration by loading environment variables and setting up the MQTT client.
 func Load() (*Config, error) {
 	envVars := map[string]*string{
-		"IMAGE_URL":      nil,
-		"INTERVAL":       &[]string{"60"}[0],
-		"MQTT_HOST":      nil,
-		"MQTT_TOPIC":     nil,
-		"MQTT_CLIENT_ID": &[]string{"dark-detector"}[0],
-		"HA_NAME":        &[]string{"Light Sensor"}[0],
+		"IMAGE_URL":                   nil,
+		"INTERVAL":                    &[]string{"60"}[0],
+		"MQTT_HOST":                   nil,
+		"MQTT_TOPIC":                  nil,
+		"MQTT_CLIENT_ID":              &[]string{"dark-detector"}[0],
+		"HASS_AUTO_DISCOVERY_ENABLED": &[]string{"true"}[0],
+		"HASS_AUTO_DISCOVERY_TOPIC":   &[]string{"homeassistant"}[0],
+		"HASS_NAME":                   &[]string{"Light Sensor"}[0],
 	}
 
 	if err := validateEnvVars(envVars); err != nil {
@@ -48,14 +52,17 @@ func Load() (*Config, error) {
 	}
 
 	config := &Config{
-		ImageURL:     *envVars["IMAGE_URL"],
-		ImageCrop:    imageCrop,
-		Interval:     interval,
-		MQTTHost:     mqttHost,
-		MQTTTopic:    *envVars["MQTT_TOPIC"],
-		MQTTClientID: *envVars["MQTT_CLIENT_ID"],
-		MQTTUsername: os.Getenv("MQTT_USERNAME"),
-		MQTTPassword: os.Getenv("MQTT_PASSWORD"),
+		ImageURL:                 *envVars["IMAGE_URL"],
+		ImageCrop:                imageCrop,
+		Interval:                 interval,
+		MQTTHost:                 mqttHost,
+		MQTTTopic:                *envVars["MQTT_TOPIC"],
+		MQTTClientID:             *envVars["MQTT_CLIENT_ID"],
+		MQTTUsername:             os.Getenv("MQTT_USERNAME"),
+		MQTTPassword:             os.Getenv("MQTT_PASSWORD"),
+		HASSAutoDiscoveryEnabled: strings.EqualFold(*envVars["HASS_AUTO_DISCOVERY_ENABLED"], "true"),
+		HASSAutoDiscoveryTopic:   *envVars["HASS_AUTO_DISCOVERY_TOPIC"],
+		HASSName:                 *envVars["HASS_NAME"],
 	}
 
 	return config, nil

@@ -2,9 +2,11 @@ package mqtt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"dark-detector/internal/config"
@@ -12,12 +14,38 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+const (
+	connectionTimeout = 10 * time.Second
+	publishTimeout    = 10 * time.Second
+)
+
+// Publisher handles MQTT communication for light sensor data
+// including Home Assistant auto-discovery
 type Publisher struct {
-	client mqtt.Client
-	topic  string
+	client                 mqtt.Client
+	topic                  string
+	entityName             string
+	uniqueID               string
+	needToPublishDiscovery bool
+	autoDiscoveryTopic     string
+	autoDiscoveryEnabled   bool
 }
 
+// NewPublisher creates a configured MQTT client with automatic
+// reconnection and QoS 1 support
 func NewPublisher(cfg *config.Config) *Publisher {
+	entityName := cfg.HASSName
+	uniqueId := strings.ToLower(strings.ReplaceAll(entityName, " ", "_"))
+
+	p := &Publisher{
+		topic:                  cfg.MQTTTopic,
+		entityName:             entityName,
+		uniqueID:               uniqueId,
+		needToPublishDiscovery: true,
+		autoDiscoveryTopic:     cfg.HASSAutoDiscoveryTopic,
+		autoDiscoveryEnabled:   cfg.HASSAutoDiscoveryEnabled,
+	}
+
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.MQTTHost).
 		SetClientID(cfg.MQTTClientID).
@@ -27,9 +55,14 @@ func NewPublisher(cfg *config.Config) *Publisher {
 		SetConnectRetry(true).
 		SetOnConnectHandler(func(client mqtt.Client) {
 			log.Println("Connected to MQTT broker")
+			if err := p.SubscribeHomeAssistantStatus(context.Background(), func() {
+				p.needToPublishDiscovery = true
+			}); err != nil {
+				log.Printf("Failed to subscribe to HA status: %v", err)
+			}
 		}).
 		SetConnectionLostHandler(func(client mqtt.Client, err error) {
-			fmt.Printf("Connection to MQTT broker lost: %v", err)
+			log.Printf("Connection to MQTT broker lost: %v", err)
 		})
 
 	if cfg.MQTTUsername != "" && cfg.MQTTPassword != "" {
@@ -37,18 +70,14 @@ func NewPublisher(cfg *config.Config) *Publisher {
 		opts.SetPassword(cfg.MQTTPassword)
 	}
 
-	log.Printf("Connecting to MQTT broker at %s", cfg.MQTTHost)
-
-	return &Publisher{
-		client: mqtt.NewClient(opts),
-		topic:  cfg.MQTTTopic,
-	}
+	p.client = mqtt.NewClient(opts)
+	return p
 }
 
 func (p *Publisher) Connect(ctx context.Context) error {
 	token := p.client.Connect()
 
-	timer := time.NewTimer(10 * time.Second)
+	timer := time.NewTimer(connectionTimeout)
 	defer timer.Stop()
 
 	select {
@@ -68,20 +97,43 @@ func (p *Publisher) Disconnect() {
 	p.client.Disconnect(250)
 }
 
+type DiscoveryPayload struct {
+	Name              string `json:"name"`
+	DeviceClass       string `json:"device_class"`
+	StateTopic        string `json:"state_topic"`
+	UnitOfMeasurement string `json:"unit_of_measurement"`
+	UniqueID          string `json:"unique_id"`
+}
+
 func (p *Publisher) PublishLux(ctx context.Context, lux int) error {
-	if !p.client.IsConnected() {
-		return fmt.Errorf("mqtt client is not connected")
+	// Publish state
+	statePayload := strconv.Itoa(lux)
+	token := p.client.Publish(p.topic, 1, false, statePayload)
+	if err := waitForPublish(ctx, token); err != nil {
+		return fmt.Errorf("failed to publish state: %w", err)
+	}
+
+	return p.PublishDiscovery(ctx)
+}
+
+func (p *Publisher) PublishDiscovery(ctx context.Context) error {
+	if !p.autoDiscoveryEnabled || !p.needToPublishDiscovery {
+		return nil
 	}
 
 	// Home Assistant discovery config
-	discoveryTopic := "homeassistant/sensor/lux_sensor/config"
-	discoveryPayload := `{
-		"name": "Light Sensor",
-		"device_class": "illuminance",
-		"state_topic": "` + p.topic + `",
-		"unit_of_measurement": "lx",
-		"unique_id": "lux_sensor"
-	}`
+	discoveryTopic := fmt.Sprintf("%s/sensor/lux_sensor/config", p.autoDiscoveryTopic)
+	payload := DiscoveryPayload{
+		Name:              p.entityName,
+		DeviceClass:       "illuminance",
+		StateTopic:        p.topic,
+		UnitOfMeasurement: "lx",
+		UniqueID:          p.uniqueID,
+	}
+	discoveryPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal discovery payload: %w", err)
+	}
 
 	// Publish discovery config
 	token := p.client.Publish(discoveryTopic, 1, true, discoveryPayload)
@@ -89,19 +141,35 @@ func (p *Publisher) PublishLux(ctx context.Context, lux int) error {
 		return fmt.Errorf("failed to publish discovery config: %w", err)
 	}
 
-	// Publish state
-	statePayload := strconv.Itoa(lux)
-	token = p.client.Publish(p.topic, 1, false, statePayload)
-	if err := waitForPublish(ctx, token); err != nil {
-		return fmt.Errorf("failed to publish state: %w", err)
+	p.needToPublishDiscovery = false
+	return nil
+}
+
+func (p *Publisher) SubscribeHomeAssistantStatus(ctx context.Context, onOnline func()) error {
+	if !p.autoDiscoveryEnabled {
+		return nil
 	}
 
+	topic := fmt.Sprintf("%s/status", p.autoDiscoveryTopic)
+	qos := byte(1)
+
+	token := p.client.Subscribe(topic, qos, func(client mqtt.Client, msg mqtt.Message) {
+		payload := string(msg.Payload())
+		if payload == "online" {
+			log.Println("Home Assistant is online. Re-publishing discovery config.")
+			onOnline()
+		}
+	})
+
+	if err := waitForPublish(ctx, token); err != nil {
+		return fmt.Errorf("failed to subscribe to Home Assistant status: %w", err)
+	}
 	return nil
 }
 
 // Helper function to wait for MQTT publish
 func waitForPublish(ctx context.Context, token mqtt.Token) error {
-	timer := time.NewTimer(10 * time.Second)
+	timer := time.NewTimer(publishTimeout)
 	defer timer.Stop()
 
 	select {
