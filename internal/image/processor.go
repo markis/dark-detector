@@ -144,7 +144,7 @@ func cropImage(img image.Image, imageCrop []int) (image.Image, error) {
 		return nil, errors.New("image has no pixels to crop")
 	}
 
-	if imageCrop == nil || len(imageCrop) != 2 || len(imageCrop) != 4 {
+	if imageCrop == nil || (len(imageCrop) != 2 && len(imageCrop) != 4) {
 		return nil, fmt.Errorf("invalid crop dimensions: %v", imageCrop)
 	}
 
@@ -156,10 +156,11 @@ func cropImage(img image.Image, imageCrop []int) (image.Image, error) {
 		width = cropWidth
 		height = cropHeight
 	}
-	x1 := imageCrop[0]
-	y1 := imageCrop[1]
-	x2 := x1 + width
-	y2 := y1 + height
+	imgBounds := img.Bounds()
+	x1 := max(imageCrop[0], imgBounds.Min.X)
+	y1 := max(imageCrop[1], imgBounds.Min.Y)
+	x2 := min(x1+width, imgBounds.Max.X)
+	y2 := min(y1+height, imgBounds.Max.Y)
 
 	newBounds := image.Rect(x1, y1, x2, y2)
 	croppedImg := img.(interface {
@@ -167,4 +168,19 @@ func cropImage(img image.Image, imageCrop []int) (image.Image, error) {
 	}).SubImage(newBounds)
 
 	return croppedImg, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
+func max(a, b int) int {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
 }
