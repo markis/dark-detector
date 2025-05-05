@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"dark-detector/internal/config"
 )
 
 // Lux calculation parameters
@@ -33,13 +35,15 @@ const (
 
 type Processor struct {
 	imageURL   string
+	imageCrop  *[]int
 	httpClient *http.Client
 	bufferPool *sync.Pool
 }
 
-func NewProcessor(imageURL string) *Processor {
+func NewProcessor(cfg *config.Config) *Processor {
 	return &Processor{
-		imageURL: imageURL,
+		imageURL:  cfg.ImageURL,
+		imageCrop: cfg.ImageCrop,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -125,10 +129,40 @@ func (p *Processor) downloadImage(ctx context.Context) (image.Image, error) {
 			continue
 		}
 
+		if p.imageCrop != nil {
+			croppedImg, err := p.cropImage(img, *p.imageCrop)
+			if err != nil {
+				return nil, fmt.Errorf("failed to crop image: %w", err)
+			}
+			img = croppedImg
+		}
+
 		return img, nil
 	}
 
 	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (p *Processor) cropImage(img image.Image, imageCrop []int) (image.Image, error) {
+	if img == nil {
+		return nil, errors.New("image is nil")
+	}
+
+	bounds := img.Bounds()
+	if bounds.Empty() {
+		return nil, errors.New("image has no pixels to crop")
+	}
+
+	if imageCrop == nil || len(imageCrop) != 4 {
+		return nil, fmt.Errorf("invalid crop dimensions: %v", imageCrop)
+	}
+
+	newBounds := image.Rect(imageCrop[0], imageCrop[1], imageCrop[2], imageCrop[3])
+	croppedImg := img.(interface {
+		SubImage(r image.Rectangle) image.Image
+	}).SubImage(newBounds)
+
+	return croppedImg, nil
 }
 
 func (p *Processor) calcLux(img image.Image) (int, error) {

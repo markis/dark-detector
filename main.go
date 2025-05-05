@@ -28,7 +28,7 @@ func main() {
 		log.Fatalf("Failed to get config: %v", err)
 	}
 
-	processor := image.NewProcessor(cfg.ImageURL)
+	processor := image.NewProcessor(cfg)
 	publisher := mqtt.NewPublisher(cfg)
 	if err := publisher.Connect(ctx); err != nil {
 		log.Fatalf("Failed to connect to MQTT broker: %v", err)

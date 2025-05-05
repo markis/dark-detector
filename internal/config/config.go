@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds the configuration for the application.
 type Config struct {
 	Interval     int
 	ImageURL     string
+	ImageCrop    *[]int
 	MQTTHost     string
 	MQTTTopic    string
 	MQTTClientID string
@@ -40,8 +42,14 @@ func Load() (*Config, error) {
 
 	mqttHost := buildMQTTHost(*envVars["MQTT_HOST"])
 
+	imageCrop, err := getImageCrop()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing IMAGE_CROP: %v", err)
+	}
+
 	config := &Config{
 		ImageURL:     *envVars["IMAGE_URL"],
+		ImageCrop:    imageCrop,
 		Interval:     interval,
 		MQTTHost:     mqttHost,
 		MQTTTopic:    *envVars["MQTT_TOPIC"],
@@ -50,11 +58,26 @@ func Load() (*Config, error) {
 		MQTTPassword: os.Getenv("MQTT_PASSWORD"),
 	}
 
-	// if err := setupMQTTClient(config); err != nil {
-	// 	return nil, fmt.Errorf("failed to setup MQTT client: %w", err)
-	// }
-
 	return config, nil
+}
+
+func getImageCrop() (*[]int, error) {
+	value := os.Getenv("IMAGE_CROP")
+	if value == "" {
+		return nil, nil
+	}
+
+	values := strings.Split(value, ",")
+	crop := make([]int, 0)
+	for _, v := range values {
+		intVal, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return nil, fmt.Errorf("error parsing IMAGE_CROP value: %v", err)
+		}
+		crop = append(crop, intVal)
+	}
+
+	return &crop, nil
 }
 
 // validateEnvVars checks if required environment variables are set and assigns them to the config struct.
