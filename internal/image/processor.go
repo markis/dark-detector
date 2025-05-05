@@ -17,6 +17,11 @@ import (
 	"dark-detector/internal/config"
 )
 
+const (
+	cropWidth  = 100
+	cropHeight = 100
+)
+
 type Processor struct {
 	imageURL   string
 	imageCrop  *[]int
@@ -127,6 +132,8 @@ func (p *Processor) downloadImage(ctx context.Context) (image.Image, error) {
 	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
+// cropImage crops the image based on the provided dimensions.
+// if only 2 crop dimensions are not provided, it defaults to cropWidth and cropHeight.
 func cropImage(img image.Image, imageCrop []int) (image.Image, error) {
 	if img == nil {
 		return nil, errors.New("image is nil")
@@ -137,11 +144,24 @@ func cropImage(img image.Image, imageCrop []int) (image.Image, error) {
 		return nil, errors.New("image has no pixels to crop")
 	}
 
-	if imageCrop == nil || len(imageCrop) != 4 {
+	if imageCrop == nil || len(imageCrop) != 2 || len(imageCrop) != 4 {
 		return nil, fmt.Errorf("invalid crop dimensions: %v", imageCrop)
 	}
 
-	newBounds := image.Rect(imageCrop[0], imageCrop[1], imageCrop[2], imageCrop[3])
+	var width, height int
+	if len(imageCrop) == 4 {
+		width = imageCrop[2]
+		height = imageCrop[3]
+	} else {
+		width = cropWidth
+		height = cropHeight
+	}
+	x1 := imageCrop[0]
+	y1 := imageCrop[1]
+	x2 := x1 + width
+	y2 := y1 + height
+
+	newBounds := image.Rect(x1, y1, x2, y2)
 	croppedImg := img.(interface {
 		SubImage(r image.Rectangle) image.Image
 	}).SubImage(newBounds)
