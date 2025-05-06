@@ -23,6 +23,7 @@ const (
 	toPercent       = 100
 )
 
+// calcLux calculates the average luminance of an image in lux.
 func calcLux(img image.Image) (int, error) {
 	bounds := img.Bounds()
 	if bounds.Empty() {
@@ -54,6 +55,7 @@ func calcLux(img image.Image) (int, error) {
 	return scaleLux(totalBrightness, pixels), nil
 }
 
+// calcLuxRGBA calculates the average luminance of an RGBA image in lux.
 func calcLuxRGBA(img *image.RGBA, width, height int) (int, error) {
 	totalBrightness := 0.0
 	pixels := width * height
@@ -80,6 +82,7 @@ func calcLuxRGBA(img *image.RGBA, width, height int) (int, error) {
 	return scaleLux(totalBrightness, pixels), nil
 }
 
+// srgbToLinear converts an sRGB color value to linear RGB.
 func srgbToLinear(c float64) float64 {
 	if c <= srgbThreshold {
 		return c / srgbLinearScale
@@ -87,6 +90,7 @@ func srgbToLinear(c float64) float64 {
 	return math.Pow((c+srgbExpOffset)/srgbExpScale, srgbGamma)
 }
 
+// scaleLux scales the average brightness to lux.
 func scaleLux(totalBrightness float64, pixels int) int {
 	if pixels == 0 {
 		return 0

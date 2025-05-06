@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/jpeg"
+	"image/jpeg"
 	_ "image/png"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ type Processor struct {
 	bufferPool *sync.Pool
 }
 
+// NewProcessor creates a new Processor instance with the provided configuration.
 func NewProcessor(cfg *config.Config) *Processor {
 	return &Processor{
 		imageURL:  cfg.ImageURL,
@@ -52,6 +54,7 @@ func NewProcessor(cfg *config.Config) *Processor {
 	}
 }
 
+// Process processes the image from the URL and calculates its luminance in lux.
 func (p *Processor) Process(ctx context.Context) (int, error) {
 	if ctx == nil {
 		return 0, fmt.Errorf("nil context provided")
@@ -74,6 +77,7 @@ func (p *Processor) Process(ctx context.Context) (int, error) {
 	return luminance, nil
 }
 
+// downloadImage downloads the image from the URL and decodes it.
 func (p *Processor) downloadImage(ctx context.Context) (image.Image, error) {
 	maxRetries := 3
 	var lastErr error
@@ -183,4 +187,19 @@ func max(a, b int) int {
 	} else {
 		return b
 	}
+}
+
+// saveToJpgFile saves the image to a JPG file.
+func saveToJpgFile(img image.Image, filename string) error {
+	out, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer out.Close()
+
+	if err := jpeg.Encode(out, img, nil); err != nil {
+		return fmt.Errorf("failed to encode image: %w", err)
+	}
+
+	return nil
 }
