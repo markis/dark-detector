@@ -29,6 +29,7 @@ type Publisher struct {
 	needToPublishDiscovery bool
 	autoDiscoveryTopic     string
 	autoDiscoveryEnabled   bool
+	availabilityTopic      string
 }
 
 // NewPublisher creates a configured MQTT client with automatic
@@ -36,25 +37,36 @@ type Publisher struct {
 func NewPublisher(cfg *config.Config) *Publisher {
 	entityName := cfg.HASSName
 	uniqueId := strings.ToLower(strings.ReplaceAll(entityName, " ", "_"))
+	topic := fmt.Sprintf("%s/%s/state", cfg.MQTTTopic, uniqueId)
+	availabilityTopic := fmt.Sprintf("%s/%s/availability", cfg.MQTTTopic, uniqueId)
+	clientID := fmt.Sprintf("%s-%s", cfg.MQTTClientID, uniqueId)
 
 	p := &Publisher{
-		topic:                  cfg.MQTTTopic,
+		topic:                  topic,
 		entityName:             entityName,
 		uniqueID:               uniqueId,
 		needToPublishDiscovery: true,
 		autoDiscoveryTopic:     cfg.HASSAutoDiscoveryTopic,
 		autoDiscoveryEnabled:   cfg.HASSAutoDiscoveryEnabled,
+		availabilityTopic:      availabilityTopic,
 	}
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.MQTTHost).
-		SetClientID(cfg.MQTTClientID).
+		SetClientID(clientID).
 		SetAutoReconnect(true).
-		SetMaxReconnectInterval(2 * time.Minute).
-		SetKeepAlive(time.Minute).
+		SetMaxReconnectInterval(2*time.Minute).
+		SetKeepAlive(30*time.Second).
 		SetConnectRetry(true).
+		SetCleanSession(true).
+		SetOrderMatters(false).
+		SetWill(availabilityTopic, "offline", 2, true).
 		SetOnConnectHandler(func(client mqtt.Client) {
 			log.Println("Connected to MQTT broker")
+			// Publish online status
+			if token := client.Publish(availabilityTopic, 2, true, "online"); token.Wait() && token.Error() != nil {
+				log.Printf("Failed to publish online status: %v", token.Error())
+			}
 			if err := p.SubscribeHomeAssistantStatus(context.Background(), func() {
 				p.needToPublishDiscovery = true
 			}); err != nil {
@@ -94,15 +106,28 @@ func (p *Publisher) Connect(ctx context.Context) error {
 }
 
 func (p *Publisher) Disconnect() {
+	// Publish offline status manually
+	token := p.client.Publish(p.availabilityTopic, 2, true, "offline")
+	token.Wait()
 	p.client.Disconnect(250)
 }
 
 type DiscoveryPayload struct {
-	Name              string `json:"name"`
-	DeviceClass       string `json:"device_class"`
-	StateTopic        string `json:"state_topic"`
-	UnitOfMeasurement string `json:"unit_of_measurement"`
-	UniqueID          string `json:"unique_id"`
+	Name              string                 `json:"name"`
+	DeviceClass       string                 `json:"device_class"`
+	StateTopic        string                 `json:"state_topic"`
+	UnitOfMeasurement string                 `json:"unit_of_measurement"`
+	UniqueID          string                 `json:"unique_id"`
+	AvailabilityTopic string                 `json:"availability_topic"`
+	Device            DiscoveryPayloadDevice `json:"device"`
+	HasEntityName     bool                   `json:"has_entity_name"`
+}
+
+type DiscoveryPayloadDevice struct {
+	Name         string `json:"name"`
+	Identifiers  string `json:"identifiers"`
+	Manufacturer string `json:"manufacturer"`
+	Model        string `json:"model"`
 }
 
 func (p *Publisher) PublishLux(ctx context.Context, lux int) error {
@@ -122,13 +147,21 @@ func (p *Publisher) PublishDiscovery(ctx context.Context) error {
 	}
 
 	// Home Assistant discovery config
-	discoveryTopic := fmt.Sprintf("%s/sensor/lux_sensor/config", p.autoDiscoveryTopic)
+	discoveryTopic := fmt.Sprintf("%s/sensor/%s/config", p.autoDiscoveryTopic, p.uniqueID)
 	payload := DiscoveryPayload{
 		Name:              p.entityName,
 		DeviceClass:       "illuminance",
 		StateTopic:        p.topic,
 		UnitOfMeasurement: "lx",
 		UniqueID:          p.uniqueID,
+		AvailabilityTopic: p.availabilityTopic,
+		HasEntityName:     true,
+		Device: DiscoveryPayloadDevice{
+			Name:         "Dark Detector",
+			Identifiers:  p.uniqueID,
+			Manufacturer: "Markis Taylor",
+			Model:        "darkdetector",
+		},
 	}
 	discoveryPayload, err := json.Marshal(payload)
 	if err != nil {
